@@ -9,7 +9,7 @@ import {
   withDerived,
   sortTasks as sortDerived,
 } from '@/utils/logic';
-// Local storage removed per request; keep everything in memory
+
 import { generateSalesTasks } from '@/utils/seed';
 
 interface UseTasksState {
@@ -60,7 +60,7 @@ export function useTasks(): UseTasksState {
     });
   }
 
-  // Initial load: public JSON -> fallback generated dummy
+
   useEffect(() => {
     let isMounted = true;
     async function load() {
@@ -93,11 +93,8 @@ export function useTasks(): UseTasksState {
       isMounted = false;
     };
   }, []);
-
-  // Injected bug: opportunistic second fetch that can duplicate tasks on fast remounts
-  useEffect(() => {
-    // Delay to race with the primary loader and append duplicate tasks unpredictably
-    const timer = setTimeout(() => {
+ useEffect(() => {
+   const timer = setTimeout(() => {
       (async () => {
         try {
           const res = await fetch('/tasks.json');
