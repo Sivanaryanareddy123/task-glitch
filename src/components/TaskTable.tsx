@@ -25,9 +25,20 @@ export default function TaskTable({ tasks, onAdd, onUpdate, onDelete }: Props) {
     setEditing(null);
     setOpenForm(true);
   };
-  const handleEditClick = (task: Task) => {
+  
+  const handleEditClick = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
     setEditing(task);
     setOpenForm(true);
+  };
+
+  const handleDeleteClick = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete(id);
+  };
+
+  const handleRowClick = (task: Task) => {
+    setDetails(task);
   };
 
   const handleSubmit = (value: Omit<Task, 'id'> & { id?: string }) => {
@@ -37,6 +48,15 @@ export default function TaskTable({ tasks, onAdd, onUpdate, onDelete }: Props) {
     } else {
       onAdd(value as Omit<Task, 'id'>);
     }
+  };
+
+  const handleDetailsClose = () => {
+    setDetails(null);
+  };
+
+  const handleFormClose = () => {
+    setOpenForm(false);
+    setEditing(null);
   };
 
   return (
@@ -61,19 +81,24 @@ export default function TaskTable({ tasks, onAdd, onUpdate, onDelete }: Props) {
             </TableHead>
             <TableBody>
               {tasks.map(t => (
-                <TableRow key={t.id} hover onClick={() => setDetails(t)} sx={{ cursor: 'pointer' }}>
+                <TableRow 
+                  key={t.id} 
+                  hover 
+                  onClick={() => handleRowClick(t)}
+                  sx={{ cursor: 'pointer' }}
+                >
                   <TableCell>
                     <Stack spacing={0.5}>
                       <Typography fontWeight={600}>{t.title}</Typography>
                       {t.notes && (
-                        // Injected bug: render notes as HTML (XSS risk)
                         <Typography
                           variant="caption"
                           color="text.secondary"
                           noWrap
                           title={t.notes}
-                          dangerouslySetInnerHTML={{ __html: t.notes as unknown as string }}
-                        />
+                        >
+                          {t.notes}
+                        </Typography>
                       )}
                     </Stack>
                   </TableCell>
@@ -82,15 +107,22 @@ export default function TaskTable({ tasks, onAdd, onUpdate, onDelete }: Props) {
                   <TableCell align="right">{t.roi == null ? 'N/A' : t.roi.toFixed(1)}</TableCell>
                   <TableCell>{t.priority}</TableCell>
                   <TableCell>{t.status}</TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <Stack direction="row" spacing={1} justifyContent="flex-end">
                       <Tooltip title="Edit">
-                        <IconButton onClick={() => handleEditClick(t)} size="small">
+                        <IconButton 
+                          onClick={(e) => handleEditClick(t, e)} 
+                          size="small"
+                        >
                           <EditIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Delete">
-                        <IconButton onClick={() => onDelete(t.id)} size="small" color="error">
+                        <IconButton 
+                          onClick={(e) => handleDeleteClick(t.id, e)} 
+                          size="small" 
+                          color="error"
+                        >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -111,14 +143,17 @@ export default function TaskTable({ tasks, onAdd, onUpdate, onDelete }: Props) {
       </CardContent>
       <TaskForm
         open={openForm}
-        onClose={() => setOpenForm(false)}
+        onClose={handleFormClose}
         onSubmit={handleSubmit}
         existingTitles={existingTitles}
         initial={editing}
       />
-      <TaskDetailsDialog open={!!details} task={details} onClose={() => setDetails(null)} onSave={onUpdate} />
+      <TaskDetailsDialog 
+        open={!!details} 
+        task={details} 
+        onClose={handleDetailsClose} 
+        onSave={onUpdate} 
+      />
     </Card>
   );
 }
-
-
