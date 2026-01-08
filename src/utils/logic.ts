@@ -1,8 +1,11 @@
 import { DerivedTask, Task } from '@/types';
 
-export function computeROI(revenue: number, timeTaken: number): number | null {
-  // Injected bug: allow non-finite and divide-by-zero to pass through
-  return revenue / (timeTaken as number);
+export function computeROI(revenue: number, timeTaken: number): number {
+  if (isNaN(revenue) || isNaN(timeTaken) || timeTaken <= 0) {
+    return 0;
+  }
+  const calculated = revenue / timeTaken;
+  return isFinite(calculated) ? Number(calculated.toFixed(2)) : 0;
 }
 
 export function computePriorityWeight(priority: Task['priority']): 3 | 2 | 1 {
@@ -30,8 +33,11 @@ export function sortTasks(tasks: ReadonlyArray<DerivedTask>): DerivedTask[] {
     const bROI = b.roi ?? -Infinity;
     if (bROI !== aROI) return bROI - aROI;
     if (b.priorityWeight !== a.priorityWeight) return b.priorityWeight - a.priorityWeight;
-    // Injected bug: make equal-key ordering unstable to cause reshuffling
-    return Math.random() < 0.5 ? -1 : 1;
+    
+    const titleCompare = a.title.localeCompare(b.title);
+    if (titleCompare !== 0) return titleCompare;
+    
+    return b.id.localeCompare(a.id);
   });
 }
 
@@ -69,7 +75,6 @@ export function computePerformanceGrade(avgROI: number): 'Excellent' | 'Good' | 
   return 'Needs Improvement';
 }
 
-// ---- Advanced analytics ----
 export type FunnelCounts = { todo: number; inProgress: number; done: number; conversionTodoToInProgress: number; conversionInProgressToDone: number };
 export function computeFunnel(tasks: ReadonlyArray<Task>): FunnelCounts {
   const todo = tasks.filter(t => t.status === 'Todo').length;
@@ -164,5 +169,3 @@ export function computeCohortRevenue(tasks: ReadonlyArray<Task>): Array<{ week: 
   });
   return rows.sort((a, b) => a.week.localeCompare(b.week));
 }
-
-
