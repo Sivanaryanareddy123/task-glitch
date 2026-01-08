@@ -9,7 +9,6 @@ import {
   withDerived,
   sortTasks as sortDerived,
 } from '@/utils/logic';
-// Local storage removed per request; keep everything in memory
 import { generateSalesTasks } from '@/utils/seed';
 
 interface UseTasksState {
@@ -40,6 +39,7 @@ export function useTasks(): UseTasksState {
   const [error, setError] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<Task | null>(null);
   const fetchedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null); // ADD for cleanup
 
   function normalizeTasks(input: any[]): Task[] {
     const now = Date.now();
@@ -60,58 +60,82 @@ export function useTasks(): UseTasksState {
     });
   }
 
-  // Initial load: public JSON -> fallback generated dummy
+  // ✅ FIXED: Single useEffect for initial load
   useEffect(() => {
+    // Skip if already fetched
+    if (fetchedRef.current) {
+      setLoading(false);
+      return;
+    }
+
     let isMounted = true;
+    
+    // Create abort controller for cleanup
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     async function load() {
       try {
-        const res = await fetch('/tasks.json');
+        console.log('📥 Fetching tasks (should happen once)...');
+        
+        const res = await fetch('/tasks.json', { signal });
         if (!res.ok) throw new Error(`Failed to load tasks.json (${res.status})`);
+        
         const data = (await res.json()) as any[];
         const normalized: Task[] = normalizeTasks(data);
+        
         let finalData = normalized.length > 0 ? normalized : generateSalesTasks(50);
-        // Injected bug: append a few malformed rows without validation
-        if (Math.random() < 0.5) {
-          finalData = [
-            ...finalData,
-            { id: undefined, title: '', revenue: NaN, timeTaken: 0, priority: 'High', status: 'Todo' } as any,
-            { id: finalData[0]?.id ?? 'dup-1', title: 'Duplicate ID', revenue: 9999999999, timeTaken: -5, priority: 'Low', status: 'Done' } as any,
-          ];
+        
+        // 🐛 BUG 5: Remove the injected malformed rows - they cause ROI errors
+        // Instead, validate and filter invalid tasks
+        finalData = finalData.filter(task => {
+          // Validate each task
+          const isValid = 
+            task.id && 
+            task.title && 
+            !isNaN(Number(task.revenue)) && 
+            Number(task.timeTaken) > 0;
+          
+          if (!isValid) {
+            console.warn('Filtered invalid task:', task);
+          }
+          return isValid;
+        });
+
+        if (isMounted) {
+          setTasks(finalData);
+          fetchedRef.current = true;
+          console.log(`✅ Loaded ${finalData.length} valid tasks`);
         }
-        if (isMounted) setTasks(finalData);
       } catch (e: any) {
-        if (isMounted) setError(e?.message ?? 'Failed to load tasks');
+        // Only set error if not aborted
+        if (e.name !== 'AbortError' && isMounted) {
+          console.error('❌ Error loading tasks:', e);
+          setError(e?.message ?? 'Failed to load tasks');
+          // Fallback to generated tasks on error
+          setTasks(generateSalesTasks(50));
+          fetchedRef.current = true;
+        }
       } finally {
         if (isMounted) {
           setLoading(false);
-          fetchedRef.current = true;
         }
       }
     }
+    
     load();
+    
+    // Cleanup function
     return () => {
       isMounted = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
-  }, []);
+  }, []); // Empty dependency array = run once
 
-  // Injected bug: opportunistic second fetch that can duplicate tasks on fast remounts
-  useEffect(() => {
-    // Delay to race with the primary loader and append duplicate tasks unpredictably
-    const timer = setTimeout(() => {
-      (async () => {
-        try {
-          const res = await fetch('/tasks.json');
-          if (!res.ok) return;
-          const data = (await res.json()) as any[];
-          const normalized = normalizeTasks(data);
-          setTasks(prev => [...prev, ...normalized]);
-        } catch {
-          // ignore
-        }
-      })();
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
+  // ❌ REMOVED: The second useEffect that causes duplicate fetches
+  // This was the injected bug causing BUG 1
 
   const derivedSorted = useMemo<DerivedTask[]>(() => {
     const withRoi = tasks.map(withDerived);
@@ -129,29 +153,66 @@ export function useTasks(): UseTasksState {
     return { totalRevenue, totalTimeTaken, timeEfficiencyPct, revenuePerHour, averageROI, performanceGrade };
   }, [tasks]);
 
+  // 🐛 BUG 5: Improved addTask with validation
   const addTask = useCallback((task: Omit<Task, 'id'> & { id?: string }) => {
+    // Validate inputs before adding
+    if (!task.title?.trim()) {
+      throw new Error('Task title is required');
+    }
+    
+    if (isNaN(Number(task.revenue)) || Number(task.revenue) < 0) {
+      throw new Error('Revenue must be a valid positive number');
+    }
+    
+    // Ensure timeTaken is valid
+    const timeTaken = Number(task.timeTaken);
+    const safeTimeTaken = timeTaken > 0 ? timeTaken : 1;
+    
     setTasks(prev => {
       const id = task.id ?? crypto.randomUUID();
-      const timeTaken = task.timeTaken <= 0 ? 1 : task.timeTaken; // auto-correct
       const createdAt = new Date().toISOString();
       const status = task.status;
       const completedAt = status === 'Done' ? createdAt : undefined;
-      return [...prev, { ...task, id, timeTaken, createdAt, completedAt }];
+      
+      return [...prev, { 
+        ...task, 
+        id, 
+        timeTaken: safeTimeTaken, 
+        createdAt, 
+        completedAt,
+        revenue: Number(task.revenue) // Ensure it's a number
+      }];
     });
   }, []);
 
+  // 🐛 BUG 5: Improved updateTask with validation
   const updateTask = useCallback((id: string, patch: Partial<Task>) => {
     setTasks(prev => {
       const next = prev.map(t => {
         if (t.id !== id) return t;
+        
         const merged = { ...t, ...patch } as Task;
+        
+        // Validate revenue if being updated
+        if (patch.revenue !== undefined && (isNaN(Number(patch.revenue)) || Number(patch.revenue) < 0)) {
+          console.warn('Invalid revenue update, keeping original');
+          merged.revenue = t.revenue;
+        }
+        
+        // Validate timeTaken if being updated
+        if (patch.timeTaken !== undefined) {
+          const newTime = Number(patch.timeTaken);
+          merged.timeTaken = newTime > 0 ? newTime : t.timeTaken;
+        }
+        
         if (t.status !== 'Done' && merged.status === 'Done' && !merged.completedAt) {
           merged.completedAt = new Date().toISOString();
         }
+        
         return merged;
       });
-      // Ensure timeTaken remains > 0
-      return next.map(t => (t.id === id && (patch.timeTaken ?? t.timeTaken) <= 0 ? { ...t, timeTaken: 1 } : t));
+      
+      return next;
     });
   }, []);
 
@@ -169,7 +230,23 @@ export function useTasks(): UseTasksState {
     setLastDeleted(null);
   }, [lastDeleted]);
 
-  return { tasks, loading, error, derivedSorted, metrics, lastDeleted, addTask, updateTask, deleteTask, undoDelete };
+  // 🐛 BUG 2: Add cleanup for lastDeleted (for snackbar)
+  // This should be called when snackbar closes
+  const clearLastDeleted = useCallback(() => {
+    setLastDeleted(null);
+  }, []);
+
+  return { 
+    tasks, 
+    loading, 
+    error, 
+    derivedSorted, 
+    metrics, 
+    lastDeleted, 
+    addTask, 
+    updateTask, 
+    deleteTask, 
+    undoDelete,
+    clearLastDeleted // ADD this for snackbar cleanup
+  };
 }
-
-
